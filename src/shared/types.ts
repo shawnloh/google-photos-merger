@@ -22,6 +22,7 @@ export interface MatchedPair {
   metadata: ParsedMetadata
   status: 'ready' | 'warning' | 'error'
   error?: string
+  matchType: 'same-dir' | 'cross-chunk' | 'manual'
 }
 
 export interface ScanResult {
