@@ -6,8 +6,10 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.t
 const VIDEO_EXTENSIONS = new Set(['.mov', '.mp4', '.avi', '.mkv', '.m4v', '.3gp'])
 
 function getExt(filePath: string): string {
-  const dot = filePath.lastIndexOf('.')
-  return dot === -1 ? '' : filePath.slice(dot).toLowerCase()
+  const sep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+  const name = filePath.slice(sep + 1)
+  const dot = name.lastIndexOf('.')
+  return dot === -1 ? '' : name.slice(dot).toLowerCase()
 }
 
 function getFileType(filePath: string): 'image' | 'video' | 'other' {
