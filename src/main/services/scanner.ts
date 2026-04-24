@@ -37,7 +37,13 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
 
   for (const jsonPath of sidecars) {
     const dir = dirname(jsonPath)
-    const base = basename(jsonPath, SIDECAR_SUFFIX)
+    const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
+    // Handle both naming patterns:
+    // Pattern A: photo.supplemental-metadata.json → base = "photo"
+    // Pattern B: photo.jpg.supplemental-metadata.json → rawBase = "photo.jpg", strip media ext
+    const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
+    const base =
+      MEDIA_EXTENSIONS.has(mediaExtInBase) ? rawBase.slice(0, rawBase.lastIndexOf('.')) : rawBase
     const mediaPath = findMediaFile(dir, base, mediaSet)
 
     if (!mediaPath) {
@@ -115,9 +121,47 @@ function isMediaFile(filePath: string): boolean {
 }
 
 function findMediaFile(dir: string, base: string, mediaSet: Set<string>): string | null {
+  // Try exact lowercase extension match first
   for (const ext of MEDIA_EXTENSIONS) {
     const candidate = join(dir, base + ext)
     if (mediaSet.has(candidate)) return candidate
   }
+
+  // Try uppercase extension variants (e.g. photo.JPG, video.MOV)
+  for (const ext of MEDIA_EXTENSIONS) {
+    const candidate = join(dir, base + ext.toUpperCase())
+    if (mediaSet.has(candidate)) return candidate
+  }
+
+  // Fallback: scan mediaSet for files in the same dir whose lowercased name matches
+  // This handles mixed-case extensions like .Jpg, .Mov, etc.
+  const lowerBase = base.toLowerCase()
+  for (const mediaPath of mediaSet) {
+    if (dirname(mediaPath) !== dir) continue
+    const mediaBase = basename(mediaPath)
+    const dotIdx = mediaBase.lastIndexOf('.')
+    if (dotIdx === -1) continue
+    const mediaName = mediaBase.slice(0, dotIdx).toLowerCase()
+    const mediaExt = mediaBase.slice(dotIdx).toLowerCase()
+    if (mediaName === lowerBase && MEDIA_EXTENSIONS.has(mediaExt)) {
+      return mediaPath
+    }
+  }
+
+  // Truncated filename fallback: Google Takeout sometimes shortens long filenames in the JSON name
+  // Try prefix match — if base is a prefix of a media filename (or vice versa) in the same dir
+  for (const mediaPath of mediaSet) {
+    if (dirname(mediaPath) !== dir) continue
+    const mediaBase = basename(mediaPath)
+    const dotIdx = mediaBase.lastIndexOf('.')
+    if (dotIdx === -1) continue
+    const mediaName = mediaBase.slice(0, dotIdx).toLowerCase()
+    const mediaExt = mediaBase.slice(dotIdx).toLowerCase()
+    if (!MEDIA_EXTENSIONS.has(mediaExt)) continue
+    if (mediaName.startsWith(lowerBase) || lowerBase.startsWith(mediaName)) {
+      return mediaPath
+    }
+  }
+
   return null
 }

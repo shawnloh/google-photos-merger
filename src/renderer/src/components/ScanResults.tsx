@@ -2,6 +2,21 @@ import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import type { MatchedPair } from '@shared/types'
 
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.tiff', '.tif', '.webp', '.gif'])
+const VIDEO_EXTENSIONS = new Set(['.mov', '.mp4', '.avi', '.mkv', '.m4v', '.3gp'])
+
+function getExt(filePath: string): string {
+  const dot = filePath.lastIndexOf('.')
+  return dot === -1 ? '' : filePath.slice(dot).toLowerCase()
+}
+
+function getFileType(filePath: string): 'image' | 'video' | 'other' {
+  const ext = getExt(filePath)
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image'
+  if (VIDEO_EXTENSIONS.has(ext)) return 'video'
+  return 'other'
+}
+
 export default function ScanResults(): JSX.Element {
   const { scanResult, selectedPairs, togglePairSelection, selectAllPairs, deselectAllPairs, setStep } =
     useAppStore()
@@ -10,6 +25,10 @@ export default function ScanResults(): JSX.Element {
   if (!scanResult) return <div className="p-8 text-gray-400">No scan results.</div>
 
   const { matched, orphanedJsons, unmatchedMedia, totalFilesScanned } = scanResult
+
+  const imageCount = matched.filter((p) => getFileType(p.mediaPath) === 'image').length
+  const videoCount = matched.filter((p) => getFileType(p.mediaPath) === 'video').length
+
   const filtered = matched.filter(
     (p) =>
       !search ||
@@ -20,11 +39,16 @@ export default function ScanResults(): JSX.Element {
   return (
     <div className="flex flex-col h-full">
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 p-6 border-b border-gray-800">
+      <div className="grid grid-cols-3 gap-4 p-6 pb-3 border-b border-gray-800">
         <StatCard label="Files Scanned" value={totalFilesScanned} color="text-gray-200" />
         <StatCard label="Matched Pairs" value={matched.length} color="text-green-400" />
-        <StatCard label="Orphaned JSON" value={orphanedJsons.length} color="text-yellow-400" />
         <StatCard label="No Metadata" value={unmatchedMedia.length} color="text-gray-400" />
+      </div>
+      {/* File type breakdown */}
+      <div className="grid grid-cols-3 gap-4 px-6 pb-4 pt-3 border-b border-gray-800">
+        <StatCard label="Images" value={imageCount} color="text-blue-400" />
+        <StatCard label="Videos" value={videoCount} color="text-purple-400" />
+        <StatCard label="Orphaned JSON" value={orphanedJsons.length} color="text-yellow-400" />
       </div>
 
       {/* Toolbar */}
@@ -63,6 +87,7 @@ export default function ScanResults(): JSX.Element {
               <tr>
                 <th className="w-10 px-4 py-2" />
                 <th className="text-left px-4 py-2 text-gray-400 font-medium">File</th>
+                <th className="text-left px-4 py-2 text-gray-400 font-medium">Type</th>
                 <th className="text-left px-4 py-2 text-gray-400 font-medium">Date</th>
                 <th className="text-left px-4 py-2 text-gray-400 font-medium">GPS</th>
                 <th className="text-left px-4 py-2 text-gray-400 font-medium">People</th>
@@ -76,6 +101,8 @@ export default function ScanResults(): JSX.Element {
                   pair={pair}
                   checked={selectedPairs.has(pair.id)}
                   onToggle={() => togglePairSelection(pair.id)}
+                  fileType={getFileType(pair.mediaPath)}
+                  fileExt={getExt(pair.mediaPath).slice(1).toUpperCase()}
                 />
               ))}
             </tbody>
@@ -123,11 +150,15 @@ function StatCard({
 function FileRow({
   pair,
   checked,
-  onToggle
+  onToggle,
+  fileType,
+  fileExt
 }: {
   pair: MatchedPair
   checked: boolean
   onToggle: () => void
+  fileType: 'image' | 'video' | 'other'
+  fileExt: string
 }): JSX.Element {
   const { metadata, status } = pair
   const date = metadata.photoTakenTime
@@ -136,6 +167,13 @@ function FileRow({
       ? new Date(metadata.creationTime).toLocaleDateString()
       : '—'
   const hasGps = !!(metadata.geoDataExif ?? metadata.geoData)
+
+  const typeBadgeStyle =
+    fileType === 'image'
+      ? 'bg-blue-900 text-blue-300'
+      : fileType === 'video'
+        ? 'bg-purple-900 text-purple-300'
+        : 'bg-gray-800 text-gray-400'
 
   return (
     <tr className="border-b border-gray-800 hover:bg-gray-900 transition-colors">
@@ -149,6 +187,11 @@ function FileRow({
       </td>
       <td className="px-4 py-2 text-gray-200 font-mono text-xs truncate max-w-xs">
         {pair.relativePath}
+      </td>
+      <td className="px-4 py-2">
+        <span className={`px-2 py-0.5 rounded text-xs font-medium font-mono ${typeBadgeStyle}`}>
+          {fileExt || '?'}
+        </span>
       </td>
       <td className="px-4 py-2 text-gray-400">{date}</td>
       <td className="px-4 py-2">
