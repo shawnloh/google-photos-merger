@@ -31,16 +31,17 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
   const sidecars = allFiles.filter((f) => f.endsWith(SIDECAR_SUFFIX))
   const mediaSet = new Set(allFiles.filter((f) => isMediaFile(f)))
 
+  // Build global media index: lowercased base name → all media paths with that name
+  const globalMediaIndex = buildGlobalMediaIndex(mediaSet)
+
   const matched: MatchedPair[] = []
   const orphanedJsons: string[] = []
   const matchedMediaPaths = new Set<string>()
 
+  // Pass 1: same-directory matching (unchanged logic)
   for (const jsonPath of sidecars) {
     const dir = dirname(jsonPath)
     const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
-    // Handle both naming patterns:
-    // Pattern A: photo.supplemental-metadata.json → base = "photo"
-    // Pattern B: photo.jpg.supplemental-metadata.json → rawBase = "photo.jpg", strip media ext
     const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
     const base =
       MEDIA_EXTENSIONS.has(mediaExtInBase) ? rawBase.slice(0, rawBase.lastIndexOf('.')) : rawBase
@@ -52,48 +53,123 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
     }
 
     matchedMediaPaths.add(mediaPath)
+    matched.push(await buildPair(jsonPath, mediaPath, rootPath, 'same-dir'))
+  }
 
-    let pair: MatchedPair
-    try {
-      const metadata = await parseMetadata(jsonPath)
-      pair = {
-        id: randomUUID(),
-        mediaPath,
-        jsonPath,
-        relativePath: mediaPath.slice(rootPath.length + 1),
-        metadata,
-        status: 'ready'
-      }
-    } catch (err) {
-      pair = {
-        id: randomUUID(),
-        mediaPath,
-        jsonPath,
-        relativePath: mediaPath.slice(rootPath.length + 1),
-        metadata: {
-          title: '',
-          description: '',
-          photoTakenTime: null,
-          creationTime: null,
-          geoData: null,
-          geoDataExif: null,
-          people: []
-        },
-        status: 'error',
-        error: err instanceof Error ? err.message : String(err)
-      }
+  // Pass 2: cross-chunk matching for remaining orphans
+  const stillOrphaned: string[] = []
+  for (const jsonPath of orphanedJsons) {
+    const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
+    const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
+    const base =
+      MEDIA_EXTENSIONS.has(mediaExtInBase) ? rawBase.slice(0, rawBase.lastIndexOf('.')) : rawBase
+    const lowerBase = base.toLowerCase()
+
+    const candidates = (globalMediaIndex.get(lowerBase) ?? []).filter(
+      (p) => !matchedMediaPaths.has(p)
+    )
+
+    if (candidates.length === 0) {
+      stillOrphaned.push(jsonPath)
+      continue
     }
 
-    matched.push(pair)
+    const mediaPath =
+      candidates.length === 1
+        ? candidates[0]
+        : pickBestCandidate(jsonPath, candidates)
+
+    matchedMediaPaths.add(mediaPath)
+    matched.push(await buildPair(jsonPath, mediaPath, rootPath, 'cross-chunk'))
   }
 
   const unmatchedMedia = [...mediaSet].filter((m) => !matchedMediaPaths.has(m))
 
   return {
     matched,
-    orphanedJsons,
+    orphanedJsons: stillOrphaned,
     unmatchedMedia,
     totalFilesScanned: allFiles.length
+  }
+}
+
+function buildGlobalMediaIndex(mediaSet: Set<string>): Map<string, string[]> {
+  const index = new Map<string, string[]>()
+  for (const mediaPath of mediaSet) {
+    const name = basename(mediaPath)
+    const dotIdx = name.lastIndexOf('.')
+    if (dotIdx === -1) continue
+    const key = name.slice(0, dotIdx).toLowerCase()
+    const existing = index.get(key)
+    if (existing) {
+      existing.push(mediaPath)
+    } else {
+      index.set(key, [mediaPath])
+    }
+  }
+  return index
+}
+
+/** Pick the candidate whose parent directory shares the most path segments with the JSON's parent. */
+function pickBestCandidate(jsonPath: string, candidates: string[]): string {
+  const jsonSegments = dirname(jsonPath).split(/[/\\]/)
+  let best = candidates[0]
+  let bestScore = -1
+  for (const candidate of candidates) {
+    const candidateSegments = dirname(candidate).split(/[/\\]/)
+    let score = 0
+    const minLen = Math.min(jsonSegments.length, candidateSegments.length)
+    for (let i = 0; i < minLen; i++) {
+      if (jsonSegments[jsonSegments.length - 1 - i] === candidateSegments[candidateSegments.length - 1 - i]) {
+        score++
+      } else {
+        break
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  }
+  return best
+}
+
+async function buildPair(
+  jsonPath: string,
+  mediaPath: string,
+  rootPath: string,
+  matchType: 'same-dir' | 'cross-chunk'
+): Promise<MatchedPair> {
+  try {
+    const metadata = await parseMetadata(jsonPath)
+    return {
+      id: randomUUID(),
+      mediaPath,
+      jsonPath,
+      relativePath: mediaPath.slice(rootPath.length + 1),
+      metadata,
+      status: 'ready',
+      matchType
+    }
+  } catch (err) {
+    return {
+      id: randomUUID(),
+      mediaPath,
+      jsonPath,
+      relativePath: mediaPath.slice(rootPath.length + 1),
+      metadata: {
+        title: '',
+        description: '',
+        photoTakenTime: null,
+        creationTime: null,
+        geoData: null,
+        geoDataExif: null,
+        people: []
+      },
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      matchType
+    }
   }
 }
 
