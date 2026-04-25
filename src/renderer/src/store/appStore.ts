@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { randomUUID } from 'crypto'
 import type { MatchedPair, ScanResult, MergeOptions, MergeResult, ParsedMetadata } from '../../../shared/types'
 
 type Step = 1 | 2 | 3 | 4
@@ -93,7 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
     const newPair: MatchedPair = {
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       mediaPath,
       jsonPath,
       relativePath: mediaPath,
