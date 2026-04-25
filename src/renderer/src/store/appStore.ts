@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { MatchedPair, ScanResult, MergeOptions, MergeResult } from '../../../shared/types'
+import { randomUUID } from 'crypto'
+import type { MatchedPair, ScanResult, MergeOptions, MergeResult, ParsedMetadata } from '../../../shared/types'
 
 type Step = 1 | 2 | 3 | 4
 
@@ -23,6 +24,8 @@ interface AppState {
   setMergeResult(result: MergeResult): void
   setIsScanning(v: boolean): void
   setIsMerging(v: boolean): void
+  addManualPair(jsonPath: string, mediaPath: string): Promise<void>
+  removePair(id: string): void
   reset(): void
 }
 
@@ -71,6 +74,65 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMergeResult: (result) => set({ mergeResult: result }),
   setIsScanning: (v) => set({ isScanning: v }),
   setIsMerging: (v) => set({ isMerging: v }),
+
+  addManualPair: async (jsonPath: string, mediaPath: string) => {
+    const current = get().scanResult
+    if (!current) return
+    let metadata: ParsedMetadata
+    try {
+      metadata = await window.api.parseMetadata(jsonPath)
+    } catch {
+      metadata = {
+        title: '',
+        description: '',
+        photoTakenTime: null,
+        creationTime: null,
+        geoData: null,
+        geoDataExif: null,
+        people: []
+      }
+    }
+    const newPair: MatchedPair = {
+      id: randomUUID(),
+      mediaPath,
+      jsonPath,
+      relativePath: mediaPath,
+      metadata,
+      status: 'ready',
+      matchType: 'manual'
+    }
+    set((s) => ({
+      scanResult: {
+        ...s.scanResult!,
+        matched: [...s.scanResult!.matched, newPair],
+        orphanedJsons: s.scanResult!.orphanedJsons.filter((j) => j !== jsonPath)
+      },
+      selectedPairs: new Set([...s.selectedPairs, newPair.id])
+    }))
+  },
+
+  removePair: (id: string) => {
+    const current = get().scanResult
+    if (!current) return
+    const pair = current.matched.find((p) => p.id === id)
+    if (!pair) return
+    const shouldReturnToOrphans = pair.matchType === 'manual' || pair.matchType === 'cross-chunk'
+    set((s) => {
+      const next = new Set(s.selectedPairs)
+      next.delete(id)
+      return {
+        scanResult: {
+          ...s.scanResult!,
+          matched: s.scanResult!.matched.filter((p) => p.id !== id),
+          orphanedJsons: shouldReturnToOrphans
+            ? [...s.scanResult!.orphanedJsons, pair.jsonPath]
+            : s.scanResult!.orphanedJsons
+        },
+        selectedPairs: next
+      }
+    })
+  },
+
   reset: () =>
     set({
       step: 1,
