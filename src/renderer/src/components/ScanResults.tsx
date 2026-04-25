@@ -199,11 +199,11 @@ function OrphanedJsonsTab({ orphanedJsons, onLink }: {
   }
 
   if (orphanedJsons.length === 0) {
-    return <div className="p-8 text-center text-gray-500">No orphaned JSON files.</div>
+    return <div className="flex-1 p-8 text-center text-gray-500">No orphaned JSON files.</div>
   }
 
   return (
-    <div className="overflow-auto">
+    <div className="flex-1 overflow-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-gray-900 border-b border-gray-800">
           <tr>
@@ -240,10 +240,10 @@ function OrphanedJsonsTab({ orphanedJsons, onLink }: {
 
 function UnmatchedMediaTab({ unmatchedMedia }: { unmatchedMedia: string[] }): JSX.Element {
   if (unmatchedMedia.length === 0) {
-    return <div className="p-8 text-center text-gray-500">All media files have metadata sidecars.</div>
+    return <div className="flex-1 p-8 text-center text-gray-500">All media files have metadata sidecars.</div>
   }
   return (
-    <div className="overflow-auto">
+    <div className="flex-1 overflow-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-gray-900 border-b border-gray-800">
           <tr>
@@ -276,13 +276,11 @@ export default function ScanResults(): JSX.Element {
     scanResult,
     selectedPairs,
     togglePairSelection,
-    selectAllPairs,
-    deselectAllPairs,
     setStep,
     addManualPair,
     removePair
   } = useAppStore()
-  const [activeTab, setActiveTab] = useState<TabId>('matched')
+const [activeTab, setActiveTab] = useState<TabId>('matched')
 
   if (!scanResult) return <div className="p-8 text-gray-400">No scan results.</div>
 
@@ -290,11 +288,20 @@ export default function ScanResults(): JSX.Element {
   const sameDirPairs = matched.filter((p) => p.matchType === 'same-dir')
   const crossChunkPairs = matched.filter((p) => p.matchType === 'cross-chunk' || p.matchType === 'manual')
 
+  // Select/deselect only the pairs visible in the active tab
+  const visiblePairs = activeTab === 'matched' ? sameDirPairs : crossChunkPairs
+  function selectVisible(): void {
+    visiblePairs.forEach((p) => { if (!selectedPairs.has(p.id)) togglePairSelection(p.id) })
+  }
+  function deselectVisible(): void {
+    visiblePairs.forEach((p) => { if (selectedPairs.has(p.id)) togglePairSelection(p.id) })
+  }
+
   async function handleLinkOrphan(jsonPath: string): Promise<void> {
     const mediaPath = await window.api.selectFile()
     if (!mediaPath) return
     await addManualPair(jsonPath, mediaPath)
-    setActiveTab('matched')
+    setActiveTab('cross-chunk')
   }
 
   const tabs: { id: TabId; label: string; count: number; color: string }[] = [
@@ -334,10 +341,10 @@ export default function ScanResults(): JSX.Element {
         </div>
         {(activeTab === 'matched' || activeTab === 'cross-chunk') && (
           <div className="flex items-center gap-4 py-2">
-            <button onClick={selectAllPairs} className="text-sm text-brand-400 hover:text-brand-300 transition-colors">
+            <button onClick={selectVisible} className="text-sm text-brand-400 hover:text-brand-300 transition-colors">
               Select All
             </button>
-            <button onClick={deselectAllPairs} className="text-sm text-gray-400 hover:text-gray-300 transition-colors">
+            <button onClick={deselectVisible} className="text-sm text-gray-400 hover:text-gray-300 transition-colors">
               Deselect All
             </button>
             <span className="text-sm text-gray-500">{selectedPairs.size} / {matched.length} selected</span>
