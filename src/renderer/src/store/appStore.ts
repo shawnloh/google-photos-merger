@@ -124,9 +124,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         scanResult: {
           ...s.scanResult!,
           matched: s.scanResult!.matched.filter((p) => p.id !== id),
-          orphanedJsons: shouldReturnToOrphans
-            ? [...s.scanResult!.orphanedJsons, pair.jsonPath]
-            : s.scanResult!.orphanedJsons
+          orphanedJsons:
+            shouldReturnToOrphans && !s.scanResult!.orphanedJsons.includes(pair.jsonPath)
+              ? [...s.scanResult!.orphanedJsons, pair.jsonPath]
+              : s.scanResult!.orphanedJsons
         },
         selectedPairs: next
       }
