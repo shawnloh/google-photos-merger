@@ -1,10 +1,23 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MatchedPair, MergeOptions, ProgressEvent } from '../shared/types'
+import type { MatchedPair, MergeOptions, ParsedMetadata, ProgressEvent } from '../shared/types'
+
+const MEDIA_FILTERS = [
+  {
+    name: 'Media Files',
+    extensions: ['jpg', 'jpeg', 'png', 'heic', 'heif', 'tiff', 'tif', 'webp', 'gif', 'mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp']
+  }
+]
 
 const api = {
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectFolder'),
 
+  selectFile: (filters?: Electron.FileFilter[]): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:selectFile', filters ?? MEDIA_FILTERS),
+
   scanFolder: (path: string) => ipcRenderer.invoke('scan:folder', path),
+
+  parseMetadata: (jsonPath: string): Promise<ParsedMetadata> =>
+    ipcRenderer.invoke('metadata:parse', jsonPath),
 
   mergeMetadata: (pairs: MatchedPair[], options: MergeOptions) =>
     ipcRenderer.invoke('merge:start', pairs, options),
