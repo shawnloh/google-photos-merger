@@ -41,10 +41,7 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
   // Pass 1: same-directory matching (unchanged logic)
   for (const jsonPath of sidecars) {
     const dir = dirname(jsonPath)
-    const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
-    const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
-    const base =
-      MEDIA_EXTENSIONS.has(mediaExtInBase) ? rawBase.slice(0, rawBase.lastIndexOf('.')) : rawBase
+    const base = extractBaseName(jsonPath)
     const mediaPath = findMediaFile(dir, base, mediaSet)
 
     if (!mediaPath) {
@@ -59,11 +56,7 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
   // Pass 2: cross-chunk matching for remaining orphans
   const stillOrphaned: string[] = []
   for (const jsonPath of orphanedJsons) {
-    const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
-    const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
-    const base =
-      MEDIA_EXTENSIONS.has(mediaExtInBase) ? rawBase.slice(0, rawBase.lastIndexOf('.')) : rawBase
-    const lowerBase = base.toLowerCase()
+    const lowerBase = extractBaseName(jsonPath).toLowerCase()
 
     const candidates = (globalMediaIndex.get(lowerBase) ?? []).filter(
       (p) => !matchedMediaPaths.has(p)
@@ -93,6 +86,14 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
   }
 }
 
+function extractBaseName(jsonPath: string): string {
+  const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
+  const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
+  return MEDIA_EXTENSIONS.has(mediaExtInBase)
+    ? rawBase.slice(0, rawBase.lastIndexOf('.'))
+    : rawBase
+}
+
 function buildGlobalMediaIndex(mediaSet: Set<string>): Map<string, string[]> {
   const index = new Map<string, string[]>()
   for (const mediaPath of mediaSet) {
@@ -120,7 +121,7 @@ function pickBestCandidate(jsonPath: string, candidates: string[]): string {
     let score = 0
     const minLen = Math.min(jsonSegments.length, candidateSegments.length)
     for (let i = 0; i < minLen; i++) {
-      if (jsonSegments[jsonSegments.length - 1 - i] === candidateSegments[candidateSegments.length - 1 - i]) {
+      if (jsonSegments[jsonSegments.length - 1 - i].toLowerCase() === candidateSegments[candidateSegments.length - 1 - i].toLowerCase()) {
         score++
       } else {
         break
