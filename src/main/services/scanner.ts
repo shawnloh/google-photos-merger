@@ -205,13 +205,18 @@ async function detectFormatFromBytes(filePath: string): Promise<string | null> {
   if (buf.length >= 12 &&
       buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
       buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'webp'
-  // HEIC/HEIF: ....ftyphe (offset 4)
-  if (buf.length >= 11 &&
-      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
-      buf[8] === 0x68 && buf[9] === 0x65) return 'heic'
+  // HEIC/HEIF: ftyp at offset 4, brand one of heic/heix/heif/mif1
+  if (buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    const brand = buf.slice(8, 12).toString('ascii')
+    if (['heic', 'heix', 'heif', 'mif1'].includes(brand)) return 'heic'
+  }
   // MP4/MOV: ....ftyp (offset 4)
   if (buf.length >= 8 &&
       buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) return 'mp4'
+  // TIFF: little-endian 49 49 2A 00 or big-endian 4D 4D 00 2A
+  if ((buf[0] === 0x49 && buf[1] === 0x49 && buf[2] === 0x2a && buf[3] === 0x00) ||
+      (buf[0] === 0x4d && buf[1] === 0x4d && buf[2] === 0x00 && buf[3] === 0x2a)) return 'tiff'
 
   return null
 }
