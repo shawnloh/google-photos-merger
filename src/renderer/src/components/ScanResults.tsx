@@ -39,14 +39,19 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   )
 }
 
-function StatusBadge({ status }: { status: MatchedPair['status'] }): JSX.Element {
+function StatusBadge({ status, warning }: { status: MatchedPair['status']; warning?: string }): JSX.Element {
   const styles = {
     ready: 'bg-green-900 text-green-300',
     warning: 'bg-yellow-900 text-yellow-300',
     error: 'bg-red-900 text-red-300'
   }
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${styles[status]}`}>{status}</span>
+    <span
+      className={`px-2 py-0.5 rounded text-xs font-medium cursor-default ${styles[status]}`}
+      title={warning}
+    >
+      {status}
+    </span>
   )
 }
 
@@ -65,7 +70,7 @@ function FileRow({
 }): JSX.Element {
   const fileType = getFileType(pair.mediaPath)
   const fileExt = getExt(pair.mediaPath).slice(1).toUpperCase()
-  const { metadata, status } = pair
+  const { metadata, status, warning, error } = pair
   const date = metadata.photoTakenTime
     ? new Date(metadata.photoTakenTime).toLocaleDateString()
     : metadata.creationTime
@@ -105,7 +110,7 @@ function FileRow({
         {metadata.people.length > 0 ? metadata.people.join(', ') : '—'}
       </td>
       <td className="px-4 py-2">
-        <StatusBadge status={status} />
+        <StatusBadge status={status} warning={warning ?? error} />
       </td>
       <td className="px-4 py-2">
         <button
