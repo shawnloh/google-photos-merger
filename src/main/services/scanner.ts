@@ -1,6 +1,6 @@
 import { promises as fs, Dirent } from 'fs'
 import { join, dirname, basename } from 'path'
-import type { ScanResult, MatchedPair } from '../../shared/types'
+import type { ScanResult, MatchedPair, ParsedMetadata } from '../../shared/types'
 import { parseMetadata } from './parser'
 import { randomUUID } from 'crypto'
 
@@ -23,12 +23,52 @@ const MEDIA_EXTENSIONS = new Set([
 ])
 
 const SIDECAR_SUFFIX = '.supplemental-metadata.json'
+// Google Takeout sometimes truncates long filenames at filesystem limits.
+// The canonical suffix is ".supplemental-metadata.json" but may be truncated to
+// ".supplemental-metadat.json" (missing trailing 'a'). We match both by detecting
+// the common prefix ".supplemental-metadat" followed by an optional 'a' and ".json".
+const SIDECAR_PATTERN = /\.supplemental-metadat(?:a)?\.json$/i
+
+/** Maps lowercased file extensions to the format label returned by detectFormatFromBytes. */
+const EXTENSION_FORMAT_MAP: Record<string, string | null> = {
+  '.jpg': 'jpeg',
+  '.jpeg': 'jpeg',
+  '.png': 'png',
+  '.gif': 'gif',
+  '.webp': 'webp',
+  '.heic': 'heic',
+  '.heif': 'heic',
+  '.tiff': 'tiff',
+  '.tif': 'tiff',
+  '.mov': 'mp4',   // QuickTime uses same ftyp container
+  '.mp4': 'mp4',
+  '.m4v': 'mp4',
+  '.avi': null,    // no reliable magic byte check
+  '.mkv': null,
+  '.3gp': null
+}
+
+/**
+ * Given a sidecar path (which may have a truncated suffix), return the canonical
+ * suffix length so we can strip it from the filename to get the base name.
+ * e.g. "photo.jpg.supplemental-metadat.json" → strips ".supplemental-metadat.json"
+ */
+function getSidecarSuffixLength(filePath: string): number {
+  // Full suffix takes priority
+  if (filePath.endsWith(SIDECAR_SUFFIX)) return SIDECAR_SUFFIX.length
+  // Truncated variant: ".supplemental-metadat.json"
+  const TRUNCATED_SUFFIX = '.supplemental-metadat.json'
+  if (filePath.endsWith(TRUNCATED_SUFFIX)) return TRUNCATED_SUFFIX.length
+  // Fallback: match via regex and measure
+  const m = filePath.match(SIDECAR_PATTERN)
+  return m ? m[0].length : 0
+}
 
 export async function scanFolder(rootPath: string): Promise<ScanResult> {
   const allFiles: string[] = []
   await walkDir(rootPath, allFiles)
 
-  const sidecars = allFiles.filter((f) => f.endsWith(SIDECAR_SUFFIX))
+  const sidecars = allFiles.filter((f) => SIDECAR_PATTERN.test(f))
   const mediaSet = new Set(allFiles.filter((f) => isMediaFile(f)))
 
   // Build global media index: lowercased base name → all media paths with that name
@@ -87,7 +127,8 @@ export async function scanFolder(rootPath: string): Promise<ScanResult> {
 }
 
 function extractBaseName(jsonPath: string): string {
-  const rawBase = basename(jsonPath, SIDECAR_SUFFIX)
+  const suffixLen = getSidecarSuffixLength(jsonPath)
+  const rawBase = suffixLen > 0 ? basename(jsonPath).slice(0, -suffixLen) : basename(jsonPath)
   const mediaExtInBase = rawBase.slice(rawBase.lastIndexOf('.')).toLowerCase()
   return MEDIA_EXTENSIONS.has(mediaExtInBase)
     ? rawBase.slice(0, rawBase.lastIndexOf('.'))
@@ -135,42 +176,101 @@ function pickBestCandidate(jsonPath: string, candidates: string[]): string {
   return best
 }
 
+/**
+ * Returns a lowercase format label ('jpeg', 'png', 'gif', 'heic', 'mp4', 'webp', or null)
+ * by reading the first 12 bytes of the file.
+ */
+async function detectFormatFromBytes(filePath: string): Promise<string | null> {
+  let buf: Buffer
+  try {
+    const fd = await fs.open(filePath, 'r')
+    try {
+      buf = Buffer.alloc(12)
+      const { bytesRead } = await fd.read(buf, 0, 12, 0)
+      if (bytesRead < 4) return null
+    } finally {
+      await fd.close()
+    }
+  } catch {
+    return null
+  }
+
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg'
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png'
+  // GIF: 47 49 46 38
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'gif'
+  // WebP: RIFF....WEBP
+  if (buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'webp'
+  // HEIC/HEIF: ftyp at offset 4, brand one of heic/heix/heif/mif1
+  if (buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    const brand = buf.slice(8, 12).toString('ascii')
+    if (['heic', 'heix', 'heif', 'mif1'].includes(brand)) return 'heic'
+  }
+  // MP4/MOV: ....ftyp (offset 4)
+  if (buf.length >= 8 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) return 'mp4'
+  // TIFF: little-endian 49 49 2A 00 or big-endian 4D 4D 00 2A
+  if ((buf[0] === 0x49 && buf[1] === 0x49 && buf[2] === 0x2a && buf[3] === 0x00) ||
+      (buf[0] === 0x4d && buf[1] === 0x4d && buf[2] === 0x00 && buf[3] === 0x2a)) return 'tiff'
+
+  return null
+}
+
 async function buildPair(
   jsonPath: string,
   mediaPath: string,
   rootPath: string,
   matchType: 'same-dir' | 'cross-chunk'
 ): Promise<MatchedPair> {
+  let metadata: ParsedMetadata
+  let status: MatchedPair['status'] = 'ready'
+  let error: string | undefined
+  let warning: string | undefined
+
   try {
-    const metadata = await parseMetadata(jsonPath)
-    return {
-      id: randomUUID(),
-      mediaPath,
-      jsonPath,
-      relativePath: mediaPath.slice(rootPath.length + 1),
-      metadata,
-      status: 'ready',
-      matchType
-    }
+    metadata = await parseMetadata(jsonPath)
   } catch (err) {
-    return {
-      id: randomUUID(),
-      mediaPath,
-      jsonPath,
-      relativePath: mediaPath.slice(rootPath.length + 1),
-      metadata: {
-        title: '',
-        description: '',
-        photoTakenTime: null,
-        creationTime: null,
-        geoData: null,
-        geoDataExif: null,
-        people: []
-      },
-      status: 'error',
-      error: err instanceof Error ? err.message : String(err),
-      matchType
+    metadata = {
+      title: '',
+      description: '',
+      photoTakenTime: null,
+      creationTime: null,
+      geoData: null,
+      geoDataExif: null,
+      people: []
     }
+    status = 'error'
+    error = err instanceof Error ? err.message : String(err)
+  }
+
+  // Extension mismatch check (only when no error already)
+  if (status === 'ready') {
+    const ext = mediaPath.slice(mediaPath.lastIndexOf('.')).toLowerCase()
+    const expectedFormat = EXTENSION_FORMAT_MAP[ext]
+    if (expectedFormat !== undefined && expectedFormat !== null) {
+      const actualFormat = await detectFormatFromBytes(mediaPath)
+      if (actualFormat !== null && actualFormat !== expectedFormat) {
+        status = 'warning'
+        warning = `Extension mismatch: file is named ${ext.toUpperCase()} but contains ${actualFormat.toUpperCase()} data. ExifTool will still process it correctly.`
+      }
+    }
+  }
+
+  return {
+    id: randomUUID(),
+    mediaPath,
+    jsonPath,
+    relativePath: mediaPath.slice(rootPath.length + 1),
+    metadata,
+    status,
+    ...(error !== undefined && { error }),
+    ...(warning !== undefined && { warning }),
+    matchType
   }
 }
 

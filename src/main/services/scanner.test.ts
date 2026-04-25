@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { scanFolder } from './scanner'
@@ -10,7 +10,7 @@ async function mkdirp(p: string): Promise<void> {
 }
 
 async function writeFile(p: string, content: string): Promise<void> {
-  await mkdirp(join(p, '..').replace(/[^/]+$/, ''))
+  await mkdirp(dirname(p))
   await fs.writeFile(p, content)
 }
 
@@ -63,6 +63,31 @@ describe('scanFolder — cross-chunk matching', () => {
     await fs.rm(root2, { recursive: true, force: true })
   })
 
+  it('matches a media file whose sidecar has a truncated suffix (.supplemental-metadat.json)', async () => {
+    const rootT = join(tmpdir(), `scan-test-truncated-${randomUUID()}`)
+    await mkdirp(join(rootT, 'Takeout 1', 'Google Photos'))
+    // Media file with a long name that causes Google Takeout to truncate the sidecar suffix
+    await fs.writeFile(
+      join(rootT, 'Takeout 1', 'Google Photos', '2013-02-02 22.42.04-1.jpg'),
+      'JPEG'
+    )
+    // Sidecar with truncated suffix: ".supplemental-metadat.json" instead of ".supplemental-metadata.json"
+    await fs.writeFile(
+      join(
+        rootT,
+        'Takeout 1',
+        'Google Photos',
+        '2013-02-02 22.42.04-1.jpg.supplemental-metadat.json'
+      ),
+      VALID_JSON
+    )
+    const result = await scanFolder(rootT)
+    expect(result.matched).toHaveLength(1)
+    expect(result.matched[0].matchType).toBe('same-dir')
+    expect(result.orphanedJsons).toHaveLength(0)
+    await fs.rm(rootT, { recursive: true, force: true })
+  })
+
   it('leaves truly orphaned JSONs (no media anywhere) in orphanedJsons', async () => {
     const root3 = join(tmpdir(), `scan-test-orphan-${randomUUID()}`)
     await mkdirp(join(root3, 'Takeout 1'))
@@ -94,5 +119,51 @@ describe('scanFolder — cross-chunk matching', () => {
     expect(result.matched).toHaveLength(1)
     expect(result.matched[0].mediaPath).toContain('Takeout 1')
     await fs.rm(root4, { recursive: true, force: true })
+  })
+})
+
+// Helper used only in tests — writes a buffer to a temp file
+async function writeBinaryFile(p: string, bytes: Buffer): Promise<void> {
+  await mkdirp(dirname(p))
+  await fs.writeFile(p, bytes)
+}
+
+// JPEG magic bytes
+const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01])
+
+describe('scanFolder — extension mismatch detection', () => {
+  it('sets status=warning and warning message when a .PNG file contains JPEG data', async () => {
+    const root = join(tmpdir(), `scan-test-mismatch-${randomUUID()}`)
+    await mkdirp(join(root, 'Photos'))
+    // Write a file named .PNG but with JPEG magic bytes
+    await writeBinaryFile(join(root, 'Photos', 'IMG_1707_Original.PNG'), JPEG_HEADER)
+    await fs.writeFile(
+      join(root, 'Photos', 'IMG_1707_Original.PNG.supplemental-metadata.json'),
+      VALID_JSON
+    )
+    const result = await scanFolder(root)
+    expect(result.matched).toHaveLength(1)
+    const pair = result.matched[0]
+    expect(pair.status).toBe('warning')
+    expect(pair.warning).toMatch(/extension mismatch/i)
+    expect(pair.warning).toMatch(/jpeg/i)
+    expect(pair.warning).toMatch(/\.png/i)
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('does NOT set warning when extension matches content (real JPEG as .jpg)', async () => {
+    const root = join(tmpdir(), `scan-test-nomismatch-${randomUUID()}`)
+    await mkdirp(join(root, 'Photos'))
+    await writeBinaryFile(join(root, 'Photos', 'photo.jpg'), JPEG_HEADER)
+    await fs.writeFile(
+      join(root, 'Photos', 'photo.jpg.supplemental-metadata.json'),
+      VALID_JSON
+    )
+    const result = await scanFolder(root)
+    expect(result.matched).toHaveLength(1)
+    const pair = result.matched[0]
+    expect(pair.status).toBe('ready')
+    expect(pair.warning).toBeUndefined()
+    await fs.rm(root, { recursive: true, force: true })
   })
 })
