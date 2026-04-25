@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { scanFolder } from './scanner'
@@ -10,7 +10,7 @@ async function mkdirp(p: string): Promise<void> {
 }
 
 async function writeFile(p: string, content: string): Promise<void> {
-  await mkdirp(join(p, '..').replace(/[^/]+$/, ''))
+  await mkdirp(dirname(p))
   await fs.writeFile(p, content)
 }
 
@@ -124,7 +124,7 @@ describe('scanFolder — cross-chunk matching', () => {
 
 // Helper used only in tests — writes a buffer to a temp file
 async function writeBinaryFile(p: string, bytes: Buffer): Promise<void> {
-  await mkdirp(join(p, '..').replace(/[^/]+$/, ''))
+  await mkdirp(dirname(p))
   await fs.writeFile(p, bytes)
 }
 
