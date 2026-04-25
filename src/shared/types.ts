@@ -22,6 +22,7 @@ export interface MatchedPair {
   metadata: ParsedMetadata
   status: 'ready' | 'warning' | 'error'
   error?: string
+  warning?: string // human-readable warning message (e.g. extension mismatch)
   matchType: 'same-dir' | 'cross-chunk' | 'manual'
 }
 
